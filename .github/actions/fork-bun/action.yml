@@ -1,0 +1,18 @@
+name: Install Bun 1.4.2
+description: >
+  Put Bun 1.4.2 on PATH before the shared bun-install action. v18.11.3's
+  packageManager floor is bun@>=1.4, so that action otherwise installs latest.
+  Bun 1.4.3 sets O_CLOEXEC on node:fs opens, which fails the release's
+  descriptor-inheritance and archive-cache tests.
+
+runs:
+  using: composite
+  steps:
+    - name: Install Bun 1.4.2
+      shell: bash
+      run: |
+        set -euo pipefail
+        export BUN_INSTALL="${HOME}/.bun"
+        curl -fsSL https://bun.sh/install | bash -s -- bun-v1.4.2
+        echo "${BUN_INSTALL}/bin" >> "$GITHUB_PATH"
+        "${BUN_INSTALL}/bin/bun" --version

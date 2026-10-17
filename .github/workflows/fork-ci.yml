@@ -19,6 +19,8 @@ jobs:
       matrix: ${{ steps.plan.outputs.matrix }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - name: Install Bun 1.4.2
+        uses: ./.github/actions/fork-bun
       - uses: ./.github/actions/bun-install
       - name: Plan shards from chunk counts
         id: plan
@@ -66,7 +68,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tarball="$(npm view @oh-my-pi/pi-natives-linux-x64@latest dist.tarball)"
+          tarball="$(npm view @oh-my-pi/pi-natives-linux-x64@18.11.3 dist.tarball)"
           echo "Fetching $tarball"
           curl -fsSL --retry 3 "$tarball" | tar -xz -C "$RUNNER_TEMP"
           mkdir -p ci-natives/natives-linux-x64-baseline ci-natives/natives-linux-x64-modern
@@ -91,6 +93,8 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - name: Install Bun 1.4.2
+        uses: ./.github/actions/fork-bun
       - uses: ./.github/actions/bun-install
       - uses: ./.github/actions/native-artifacts
         with:
