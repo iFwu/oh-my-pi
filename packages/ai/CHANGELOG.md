@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed Cursor conversation checkpoints that report this turn's billed total, cache included, as `usedTokens`. Compaction treats that field as context occupancy, so a session still under the window was compacted. A checkpoint that merely echoes the bill now keeps the non-cache portion, and a reading that is not the bill is unchanged.
+
 ## [18.11.3] - 2026-10-16
 
 ### Fixed

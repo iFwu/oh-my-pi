@@ -1,0 +1,105 @@
+# Fork-only test fan-out. Upstream ci.yml stays untouched and still targets
+# omp-kata on main; this file runs only on iFwu/oh-my-pi so a later upstream
+# PR can drop it without changing the fix.
+name: Fork CI
+
+on:
+  push:
+    branches: [fork]
+  pull_request:
+    branches: [fork]
+  workflow_dispatch:
+
+jobs:
+  plan:
+    name: Plan test shards
+    if: github.repository == 'iFwu/oh-my-pi'
+    runs-on: ubuntu-22.04
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: ./.github/actions/bun-install
+      - name: Plan shards from chunk counts
+        id: plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Cap is the most shards a bucket may use. The planner never asks
+          # for more shards than that mode has chunks, so OMP_TEST_SHARD
+          # cannot select an empty slice.
+          bun - <<'EOF' >> "$GITHUB_OUTPUT"
+          const caps = [
+            ["workspace", "ci:test:ts:workspace", 2],
+            ["native", "ci:test:ts:native", 2],
+            ["coding-agent-singleton", "ci:test:coding-agent:singleton", 1],
+            ["coding-agent-ui", "ci:test:coding-agent:ui", 3],
+            ["coding-agent-runtime", "ci:test:coding-agent:runtime", 3],
+            ["coding-agent-native", "ci:test:coding-agent:native", 3],
+          ];
+          const rows = [];
+          for (const [mode, script, cap] of caps) {
+            const proc = Bun.spawn(["bun", "scripts/ci-test-ts.ts", mode, "--dry-run"], {
+              stdout: "pipe",
+              stderr: "inherit",
+            });
+            const text = await new Response(proc.stdout).text();
+            const exit = await proc.exited;
+            if (exit !== 0) throw new Error(`${mode} dry-run exited ${exit}`);
+            const chunks = text.split("\n").filter(line => line.startsWith("==> ")).length;
+            if (chunks < 1) throw new Error(`${mode} produced no chunks`);
+            const shards = Math.min(cap, chunks);
+            for (let index = 1; index <= shards; index++) {
+              rows.push({ name: `${mode} ${index}/${shards}`, script, shard: `${index}/${shards}` });
+            }
+          }
+          const matrix = JSON.stringify({ include: rows });
+          console.log(`matrix=${matrix}`);
+          EOF
+
+  natives:
+    name: Fetch linux-x64 native addons
+    if: github.repository == 'iFwu/oh-my-pi'
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Download published linux-x64 addons
+        shell: bash
+        run: |
+          set -euo pipefail
+          tarball="$(npm view @oh-my-pi/pi-natives-linux-x64@latest dist.tarball)"
+          echo "Fetching $tarball"
+          curl -fsSL --retry 3 "$tarball" | tar -xz -C "$RUNNER_TEMP"
+          mkdir -p ci-natives/natives-linux-x64-baseline ci-natives/natives-linux-x64-modern
+          cp "$RUNNER_TEMP/package/pi_natives.linux-x64-baseline.node" ci-natives/natives-linux-x64-baseline/
+          cp "$RUNNER_TEMP/package/pi_natives.linux-x64-modern.node" ci-natives/natives-linux-x64-modern/
+      - name: Upload linux-x64 native addon artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: natives-linux-x64
+          path: ci-natives/natives-linux-x64-*/*.node
+          if-no-files-found: error
+          retention-days: 1
+
+  test:
+    name: "Test ${{ matrix.name }}"
+    if: github.repository == 'iFwu/oh-my-pi'
+    needs: [plan, natives]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: ./.github/actions/bun-install
+      - uses: ./.github/actions/native-artifacts
+        with:
+          targets: linux-x64-baseline linux-x64-modern
+      - name: Run shard
+        env:
+          OMP_TEST_CONCURRENCY: "4"
+          OMP_TEST_SHARD: ${{ matrix.shard }}
+        run: bun run ${{ matrix.script }}
+      - name: Release script test
+        if: matrix.script == 'ci:test:ts:workspace' && startsWith(matrix.shard, '1/')
+        run: bun test scripts/release.test.ts
